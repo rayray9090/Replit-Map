@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Office Floor Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      height: 100vh;
+      display: flex;
+      background: #020617;
+      color: #e5e7eb;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr) 260px;
+      width: 100%;
+      height: 100%;
+    }
+
+    .panel {
+      padding: 16px;
+      border-right: 1px solid rgba(148, 163, 184, 0.3);
+      background: #020617;
+    }
+
+    .panel.right {
+      border-right: none;
+      border-left: 1px solid rgba(148, 163, 184, 0.3);
+    }
+
+    .panel h2 {
+      font-size: 16px;
+      margin-bottom: 10px;
+      color: #f9fafb;
+    }
+
+    .rooms-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: calc(100vh - 60px);
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .room-item {
+      border-radius: 8px;
+      padding: 8px 10px;
+      border: 1px solid transparent;
+      background: rgba(15, 23, 42, 0.8);
+      cursor: pointer;
+      font-size: 13px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
+    }
+
+    .room-item:hover {
+      background: rgba(30, 64, 175, 0.45);
+      border-color: rgba(59, 130, 246, 0.7);
+      transform: translateY(-1px);
+    }
+
+    .room-item.active {
+      background: rgba(37, 99, 235, 0.8);
+      border-color: #60a5fa;
+    }
+
+    .room-name {
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+
+    .room-type {
+      font-size: 11px;
+      color: #9ca3af;
+    }
+
+    .map-panel {
+      position: relative;
+      background: radial-gradient(circle at top, #020617, #020617 60%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .map-inner {
+      position: relative;
+      max-width: 1100px;
+      width: 95%;
+      max-height: 95%;
+      aspect-ratio: 2048 / 1804; /* roughly your image ratio */
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      background: #020617;
+      box-shadow: 0 20px 40px rgba(15, 23, 42, 0.8);
+    }
+
+    #floor-image {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      background: #020617;
+    }
+
+    #overlay-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .legend {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      background: rgba(15, 23, 42, 0.9);
+      padding: 6px 10px;
+      border-radius: 999px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      font-size: 11px;
+      border: 1px solid rgba(148, 163, 184, 0.5);
+      backdrop-filter: blur(6px);
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+    }
+
+    .legend-dot.you {
+      background: #22c55e;
+    }
+
+    .legend-dot.target {
+      background: #60a5fa;
+    }
+
+    .legend span {
+      color: #d1d5db;
+    }
+
+    .room-details {
+      font-size: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .room-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #f9fafb;
+    }
+
+    .room-meta {
+      font-size: 12px;
+      color: #9ca3af;
+    }
+
+    .badge {
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      color: #e5e7eb;
+      background: rgba(15, 23, 42, 0.9);
+    }
+
+    .divider {
+      height: 1px;
+      background: rgba(55, 65, 81, 0.9);
+      margin: 10px 0;
+    }
+
+    .steps {
+      font-size: 12px;
+      color: #d1d5db;
+      line-height: 1.5;
+    }
+
+    .hint {
+      font-size: 11px;
+      color: #9ca3af;
+    }
+
+    @keyframes dash {
+      from {
+        stroke-dashoffset: 1200;
+      }
+      to {
+        stroke-dashoffset: 0;
+      }
+    }
+
+    .animated-path {
+      animation: dash 0.6s ease-out forwards;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- LEFT: ROOMS LIST -->
+    <div class="panel">
+      <h2>Areas</h2>
+      <div class="hint" style="margin-bottom:8px;">
+        Click an area to see it on the map.
+      </div>
+      <div id="rooms-list" class="rooms-list"></div>
+    </div>
+
+    <!-- CENTER: MAP -->
+    <div class="map-panel">
+      <div class="map-inner" id="map-inner">
+        <!-- IMPORTANT: this must be the same name as your uploaded file -->
+        <img
+          id="floor-image"
+          src="floorplan.png"
+          alt="Office Floor Plan"
+        />
+        <svg id="overlay-svg" viewBox="0 0 1000 882" preserveAspectRatio="xMidYMid meet"></svg>
+
+        <div class="legend">
+          <div class="legend-dot you"></div>
+          <span>You</span>
+          <div class="legend-dot target"></div>
+          <span>Selected Area</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: DETAILS -->
+    <div class="panel right">
+      <h2>Details</h2>
+      <div class="room-details">
+        <div id="room-title" class="room-title">No area selected</div>
+        <div class="room-meta" id="room-meta">
+          Select an area on the left to highlight it on the floor plan and see basic info here.
+        </div>
+        <div class="divider"></div>
+        <div>
+          <span class="badge">Route</span>
+          <p id="route-text" class="steps" style="margin-top: 8px;">
+            When you pick an area, a blue line will animate from your starting location to that area on the map.
+          </p>
+        </div>
+        <div class="divider"></div>
+        <div>
+          <span class="badge">Editing pins</span>
+          <p class="hint" style="margin-top: 6px;">
+            Each area’s position is controlled by x/y numbers (0–1) in the JavaScript
+            <code>areas</code> list. Tweak those values to move the pins until they line up with the labels
+            on your floor plan.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /***** CONFIG: EDIT THIS PART FOR YOUR FLOOR *****/
+
+    // "You are here" starting point (normalized 0–1 values)
+    // (0,0) = top-left, (1,1) = bottom-right of the image
+    const youPosition = { x: 0.55, y: 0.50 };
+
+    // Areas that match labels on your map image
+    // NOTE: All x/y are rough guesses — tweak them until pins sit where you want.
+    const areas = [
+      {
+        id: "sales",
+        name: "Sales",
+        type: "Team Area",
+        x: 0.64,
+        y: 0.10,
+        notes: "Sales pods and meeting spots."
+      },
+      {
+        id: "marketing",
+        name: "Marketing + Community",
+        type: "Team Area",
+        x: 0.60,
+        y: 0.20,
+        notes: "Brand, campaigns, and community space."
+      },
+      {
+        id: "po-talent",
+        name: "PO + Talent",
+        type: "Team Area",
+        x: 0.83,
+        y: 0.18,
+        notes: "People operations and recruiting."
+      },
+      {
+        id: "finance-business",
+        name: "Finance + Business",
+        type: "Team Area",
+        x: 0.83,
+        y: 0.33,
+        notes: "Finance and business operations desks."
+      },
+      {
+        id: "product-design",
+        name: "Product + Design",
+        type: "Team Area",
+        x: 0.32,
+        y: 0.60,
+        notes: "Product managers and designers."
+      },
+      {
+        id: "support",
+        name: "Support",
+        type: "Team Area",
+        x: 0.16,
+        y: 0.78,
+        notes: "Customer support seating."
+      },
+      {
+        id: "peng",
+        name: "PENG",
+        type: "Engineering",
+        x: 0.30,
+        y: 0.78,
+        notes: "Product engineering pods."
+      },
+      {
+        id: "platform",
+        name: "Platform",
+        type: "Engineering",
+        x: 0.44,
+        y: 0.78,
+        notes: "Platform engineering area."
+      },
+      {
+        id: "workspace",
+        name: "Workspace",
+        type: "Team Area",
+        x: 0.58,
+        y: 0.78,
+        notes: "Flexible workspace / hot desks."
+      },
+      {
+        id: "ai",
+        name: "AI",
+        type: "Team Area",
+        x: 0.60,
+        y: 0.88,
+        notes: "AI team collaboration zone."
+      }
+    ];
+
+    /***** APP LOGIC *****/
+
+    const roomsListEl = document.getElementById("rooms-list");
+    const overlaySvg = document.getElementById("overlay-svg");
+    const roomTitleEl = document.getElementById("room-title");
+    const roomMetaEl = document.getElementById("room-meta");
+    const routeTextEl = document.getElementById("route-text");
+
+    let selectedId = null;
+
+    function buildRoomsList() {
+      roomsListEl.innerHTML = "";
+      areas.forEach((area) => {
+        const item = document.createElement("button");
+        item.className = "room-item";
+        item.dataset.id = area.id;
+
+        const name = document.createElement("div");
+        name.className = "room-name";
+        name.textContent = area.name;
+
+        const type = document.createElement("div");
+        type.className = "room-type";
+        type.textContent = area.type;
+
+        item.appendChild(name);
+        item.appendChild(type);
+
+        item.addEventListener("click", () => {
+          setSelectedArea(area.id);
+        });
+
+        roomsListEl.appendChild(item);
+      });
+    }
+
+    function setSelectedArea(id) {
+      selectedId = id;
+      updateRoomsListActiveState();
+      renderOverlay();
+      updateDetails();
+    }
+
+    function updateRoomsListActiveState() {
+      document.querySelectorAll(".room-item").forEach((el) => {
+        const id = el.dataset.id;
+        el.classList.toggle("active", id === selectedId);
+      });
+    }
+
+    function renderOverlay() {
+      overlaySvg.innerHTML = "";
+      const width = 1000;
+      const height = 882; // matches viewBox
+
+      // Draw "You" pin
+      const youX = youPosition.x * width;
+      const youY = youPosition.y * height;
+
+      const youCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      youCircle.setAttribute("cx", youX);
+      youCircle.setAttribute("cy", youY);
+      youCircle.setAttribute("r", 9);
+      youCircle.setAttribute("fill", "#22c55e");
+      youCircle.setAttribute("stroke", "#bbf7d0");
+      youCircle.setAttribute("stroke-width", "2");
+      overlaySvg.appendChild(youCircle);
+
+      const youLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      youLabel.setAttribute("x", youX + 10);
+      youLabel.setAttribute("y", youY - 10);
+      youLabel.setAttribute("fill", "#d1fae5");
+      youLabel.setAttribute("font-size", "16");
+      youLabel.setAttribute(
+        "font-family",
+        "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+      );
+      youLabel.textContent = "You";
+      overlaySvg.appendChild(youLabel);
+
+      if (!selectedId) return;
+
+      const area = areas.find((a) => a.id === selectedId);
+      if (!area) return;
+
+      const roomX = area.x * width;
+      const roomY = area.y * height;
+
+      // Room pin
+      const targetCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      targetCircle.setAttribute("cx", roomX);
+      targetCircle.setAttribute("cy", roomY);
+      targetCircle.setAttribute("r", 9);
+      targetCircle.setAttribute("fill", "#60a5fa");
+      targetCircle.setAttribute("stroke", "#bfdbfe");
+      targetCircle.setAttribute("stroke-width", "2");
+      overlaySvg.appendChild(targetCircle);
+
+      const targetLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      targetLabel.setAttribute("x", roomX + 10);
+      targetLabel.setAttribute("y", roomY - 10);
+      targetLabel.setAttribute("fill", "#e0f2fe");
+      targetLabel.setAttribute("font-size", "16");
+      targetLabel.setAttribute(
+        "font-family",
+        "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+      );
+      targetLabel.textContent = area.name;
+      overlaySvg.appendChild(targetLabel);
+
+      // Path from "You" to area
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      const d = `M ${youX} ${youY} L ${roomX} ${roomY}`;
+      path.setAttribute("d", d);
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", "#38bdf8");
+      path.setAttribute("stroke-width", "4");
+      path.setAttribute("stroke-linecap", "round");
+      path.setAttribute("stroke-dasharray", "1200");
+      path.setAttribute("stroke-dashoffset", "1200");
+      path.classList.add("animated-path");
+      overlaySvg.appendChild(path);
+    }
+
+    function updateDetails() {
+      if (!selectedId) {
+        roomTitleEl.textContent = "No area selected";
+        roomMetaEl.textContent = "Click an area on the left to highlight it on the map.";
+        routeTextEl.textContent =
+          "Once an area is selected, this will show a simple text route from where the employee starts to that area.";
+        return;
+      }
+
+      const area = areas.find((a) => a.id === selectedId);
+      if (!area) return;
+
+      roomTitleEl.textContent = area.name;
+      roomMetaEl.textContent = `${area.type} · ${area.notes || ""}`;
+      routeTextEl.textContent = `Starting from your current location, follow the blue path on the map to the ${area.name} area.`;
+    }
+
+    // Initialize
+    buildRoomsList();
+    renderOverlay();
+  </script>
+</body>
+</html>
